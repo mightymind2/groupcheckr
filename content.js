@@ -16,7 +16,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'extractGroups') {
-    sendResponse({ groups: extractGroupsFromPage() });
+    extractGroupsFromPage().then(groups => sendResponse({ groups }));
     return true;
   }
 
@@ -40,7 +40,9 @@ function detectPageType() {
 
 // ─── Group extraction ─────────────────────────────────────────────────────────
 // NOTE: Keep in sync with the copy inside popup.js (extractGroupsFromPage).
-function extractGroupsFromPage() {
+// Async so it can scroll the page to trigger Facebook's lazy loading and
+// collect ALL groups, not just those initially visible in the DOM.
+async function extractGroupsFromPage() {
   const SKIP_IDS = new Set([
     'feed', 'create', 'discover', 'joined', 'suggested', 'local',
     'category', 'app', 'events', 'invites', 'updates'
@@ -75,30 +77,78 @@ function extractGroupsFromPage() {
   const groups = [];
   const seen = new Set();
 
-  document.querySelectorAll('a[href*="/groups/"]').forEach(link => {
-    const href = link.href || '';
-    const match = href.match(/facebook\.com\/groups\/([^/?#\s]+)/);
-    if (!match) return;
+  function collectVisible() {
+    document.querySelectorAll('a[href*="/groups/"]').forEach(link => {
+      const href = link.href || '';
+      const match = href.match(/facebook\.com\/groups\/([^/?#\s]+)/);
+      if (!match) return;
 
-    const groupId = match[1].toLowerCase();
-    if (SKIP_IDS.has(groupId)) return;
-    if (seen.has(groupId)) return;
+      const groupId = match[1].toLowerCase();
+      if (SKIP_IDS.has(groupId)) return;
+      if (seen.has(groupId)) return;
 
-    let name = (link.innerText || link.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-    if (!name || name.length < 2 || name.length > 200) return;
-    if (link.getAttribute('role') === 'button') return;
+      let name = (link.innerText || link.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      if (!name || name.length < 2 || name.length > 200) return;
+      if (link.getAttribute('role') === 'button') return;
 
-    const { memberCount, memberCountText } = findMemberCount(link);
+      const { memberCount, memberCountText } = findMemberCount(link);
 
-    seen.add(groupId);
-    groups.push({
-      id: groupId,
-      name,
-      url: 'https://www.facebook.com/groups/' + match[1],
-      memberCount,
-      memberCountText
+      seen.add(groupId);
+      groups.push({
+        id: groupId,
+        name,
+        url: 'https://www.facebook.com/groups/' + match[1],
+        memberCount,
+        memberCountText
+      });
     });
-  });
+  }
+
+  function scrollAll() {
+    window.scrollTo(0, document.body.scrollHeight);
+    const visited = new Set();
+    document.querySelectorAll('a[href*="/groups/"]').forEach(link => {
+      let el = link.parentElement;
+      while (el && el !== document.body && el !== document.documentElement) {
+        if (visited.has(el)) break;
+        visited.add(el);
+        const { overflow, overflowY } = window.getComputedStyle(el);
+        if (/auto|scroll/.test(overflow) || /auto|scroll/.test(overflowY)) {
+          el.scrollTop = el.scrollHeight;
+          break;
+        }
+        el = el.parentElement;
+      }
+    });
+  }
+
+  function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  collectVisible();
+
+  // NOTE: MAX_SCROLLS / PAUSE_MS / STOP_AFTER are intentionally duplicated here
+  // and in the copy inside popup.js. extractGroupsFromPage must be entirely
+  // self-contained because chrome.scripting.executeScript serialises its body.
+  const MAX_SCROLLS = 30;
+  const PAUSE_MS = 1000;
+  const STOP_AFTER = 3;
+  let empty = 0;
+
+  for (let i = 0; i < MAX_SCROLLS; i++) {
+    const before = groups.length;
+    scrollAll();
+    await wait(PAUSE_MS);
+    collectVisible();
+    if (groups.length === before) {
+      if (++empty >= STOP_AFTER) break;
+    } else {
+      empty = 0;
+    }
+  }
+
+  window.scrollTo(0, 0);
 
   return groups;
 }

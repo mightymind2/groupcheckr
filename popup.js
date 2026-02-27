@@ -66,7 +66,9 @@ async function loadMyGroups() {
       return;
     }
 
-    // Execute extraction in the context of the Facebook tab
+    // Execute extraction in the context of the Facebook tab.
+    // extractGroupsFromPage is async and scrolls the page to trigger lazy loading.
+    showStatus('Scanning your groups – scrolling to load all of them, please wait…', 'info');
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: extractGroupsFromPage
@@ -335,7 +337,9 @@ function escapeAttr(str) {
 // ─── extractGroupsFromPage ────────────────────────────────────────────────────
 // This function is serialised and injected into the Facebook tab via
 // chrome.scripting.executeScript – it must be entirely self-contained.
-function extractGroupsFromPage() {
+// It is async so it can scroll the page to trigger Facebook's infinite-scroll
+// / lazy loading and collect ALL groups, not just those initially in the DOM.
+async function extractGroupsFromPage() {
   'use strict';
 
   const SKIP_IDS = new Set([
@@ -377,35 +381,80 @@ function extractGroupsFromPage() {
   const groups = [];
   const seen = new Set();
 
-  const links = document.querySelectorAll('a[href*="/groups/"]');
+  // Collect all group links currently rendered in the DOM.
+  function collectVisible() {
+    document.querySelectorAll('a[href*="/groups/"]').forEach(link => {
+      const href = link.href || '';
+      const match = href.match(/facebook\.com\/groups\/([^/?#\s]+)/);
+      if (!match) return;
 
-  links.forEach(link => {
-    const href = link.href || '';
-    const match = href.match(/facebook\.com\/groups\/([^/?#\s]+)/);
-    if (!match) return;
+      const groupId = match[1].toLowerCase();
+      if (SKIP_IDS.has(groupId)) return;
+      if (seen.has(groupId)) return;
 
-    const groupId = match[1].toLowerCase();
-    if (SKIP_IDS.has(groupId)) return;
-    if (seen.has(groupId)) return;
+      let name = (link.innerText || link.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      if (!name || name.length < 2 || name.length > 200) return;
+      if (link.getAttribute('role') === 'button') return;
 
-    // Get name from link text (strip extraneous whitespace)
-    let name = (link.innerText || link.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-    if (!name || name.length < 2 || name.length > 200) return;
+      const { memberCount, memberCountText } = findMemberCount(link);
 
-    // Skip pure icon / navigation anchors that have no useful text
-    if (link.getAttribute('role') === 'button') return;
-
-    const { memberCount, memberCountText } = findMemberCount(link);
-
-    seen.add(groupId);
-    groups.push({
-      id: groupId,
-      name,
-      url: 'https://www.facebook.com/groups/' + match[1],
-      memberCount,
-      memberCountText
+      seen.add(groupId);
+      groups.push({
+        id: groupId,
+        name,
+        url: 'https://www.facebook.com/groups/' + match[1],
+        memberCount,
+        memberCountText
+      });
     });
-  });
+  }
+
+  // Scroll both the main window and any overflow-scroll containers that hold
+  // group links (Facebook renders the joined-groups list in a sidebar div).
+  function scrollAll() {
+    window.scrollTo(0, document.body.scrollHeight);
+    const visited = new Set();
+    document.querySelectorAll('a[href*="/groups/"]').forEach(link => {
+      let el = link.parentElement;
+      while (el && el !== document.body && el !== document.documentElement) {
+        if (visited.has(el)) break;
+        visited.add(el);
+        const { overflow, overflowY } = window.getComputedStyle(el);
+        if (/auto|scroll/.test(overflow) || /auto|scroll/.test(overflowY)) {
+          el.scrollTop = el.scrollHeight;
+          break;
+        }
+        el = el.parentElement;
+      }
+    });
+  }
+
+  function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // First pass before any scrolling
+  collectVisible();
+
+  const MAX_SCROLLS = 30;   // safety ceiling
+  const PAUSE_MS = 1000;    // wait after each scroll for lazy-load to render
+  const STOP_AFTER = 3;     // stop after this many consecutive scrolls with no new groups
+  let empty = 0;
+
+  for (let i = 0; i < MAX_SCROLLS; i++) {
+    const before = groups.length;
+    scrollAll();
+    await wait(PAUSE_MS);
+    collectVisible();
+    if (groups.length === before) {
+      if (++empty >= STOP_AFTER) break;
+    } else {
+      empty = 0;
+    }
+  }
+
+  // Scroll back to top so the page looks undisturbed
+  window.scrollTo(0, 0);
 
   return groups;
 }
