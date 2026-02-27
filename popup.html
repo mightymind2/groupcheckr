@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GroupCheckr</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div class="header-logo">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="14" cy="14" r="14" fill="#1877f2"/>
+        <text x="14" y="19" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="16" fill="white">G</text>
+      </svg>
+    </div>
+    <div class="header-text">
+      <h1>GroupCheckr</h1>
+      <p>Facebook Group Manager</p>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="my-groups" role="tab" aria-selected="true" aria-controls="my-groups">
+      My Groups
+    </button>
+    <button class="tab-btn" data-tab="find-groups" role="tab" aria-selected="false" aria-controls="find-groups">
+      Find Groups
+    </button>
+  </div>
+
+  <!-- Tab: My Groups -->
+  <div id="my-groups" class="tab-pane active" role="tabpanel">
+    <div class="controls">
+      <button id="load-groups-btn" class="btn btn-primary">
+        <span class="btn-icon">↻</span> Load My Groups
+      </button>
+      <button id="bulk-select-btn" class="btn btn-secondary" hidden>
+        ☑ Select
+      </button>
+    </div>
+
+    <!-- Bulk action bar -->
+    <div id="bulk-bar" class="bulk-bar" hidden>
+      <label class="bulk-select-all">
+        <input type="checkbox" id="select-all-cb" /> Select all
+      </label>
+      <button id="leave-selected-btn" class="btn btn-danger" disabled>
+        Leave (0)
+      </button>
+    </div>
+
+    <!-- Filter & Sort -->
+    <div class="filter-bar" id="filter-bar" hidden>
+      <div class="filter-row">
+        <label for="max-members">Max members:</label>
+        <input type="number" id="max-members" placeholder="e.g. 500" min="0" />
+        <button id="apply-filter-btn" class="btn btn-secondary">Filter</button>
+        <button id="clear-filter-btn" class="btn btn-ghost">✕</button>
+      </div>
+      <div class="filter-row">
+        <label for="sort-by">Sort:</label>
+        <select id="sort-by">
+          <option value="name">Name (A–Z)</option>
+          <option value="members-asc">Members ↑ (Low first)</option>
+          <option value="members-desc">Members ↓ (High first)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Results count -->
+    <div id="my-groups-count" class="results-count" hidden></div>
+
+    <!-- Groups list -->
+    <div id="groups-list" class="groups-container">
+      <div class="placeholder">
+        <p>Click <strong>Load My Groups</strong> while on Facebook to see your groups with member counts.</p>
+        <p class="hint">You need to be on <strong>facebook.com</strong> for this to work.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Find Groups -->
+  <div id="find-groups" class="tab-pane" role="tabpanel" hidden>
+    <div class="search-controls">
+      <input
+        type="text"
+        id="search-query"
+        class="search-input"
+        placeholder="Keywords or niche (e.g. photography, cooking)"
+        autocomplete="off"
+      />
+      <button id="search-btn" class="btn btn-primary">Search</button>
+    </div>
+
+    <!-- Results count -->
+    <div id="search-count" class="results-count" hidden></div>
+
+    <!-- Search results -->
+    <div id="search-results" class="groups-container">
+      <div class="placeholder">
+        <p>Enter keywords to discover Facebook groups with member counts.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div id="status-bar" class="status-bar" hidden role="status" aria-live="polite"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
