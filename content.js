@@ -61,14 +61,18 @@ async function extractGroupsFromPage() {
   }
 
   function findMemberCount(anchor) {
+    // Walk up at most 6 levels; at each level check direct children
+    // independently to avoid capturing text from sibling group cards.
     let el = anchor;
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 6; i++) {
       el = el.parentElement;
       if (!el) break;
-      const text = el.innerText || '';
-      const m = text.match(/([\d,.]+\s*[KMBkmb]?)\s+[Mm]embers?/);
-      if (m) {
-        return { memberCount: parseCount(m[1]), memberCountText: m[0].trim() };
+      for (const child of el.children) {
+        const text = child.innerText || '';
+        const m = text.match(/([\d,.]+\s*[KMBkmb]?)\s+[Mm]embers?/);
+        if (m) {
+          return { memberCount: parseCount(m[1]), memberCountText: m[0].trim() };
+        }
       }
     }
     return { memberCount: 0, memberCountText: '' };

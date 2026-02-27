@@ -5,6 +5,9 @@
 let myGroups = [];          // Raw groups from Facebook (My Groups tab)
 let searchResults = [];     // Raw groups from Facebook search
 let activeMaxMembers = null; // Active filter value
+let bulkMode = false;        // Whether bulk-select mode is active
+let selectedGroups = new Set(); // IDs of groups selected for bulk leave
+let visibleGroups = [];      // Currently rendered (filtered + sorted) groups
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -18,6 +21,21 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('apply-filter-btn').addEventListener('click', applyFilter);
   document.getElementById('clear-filter-btn').addEventListener('click', clearFilter);
   document.getElementById('sort-by').addEventListener('change', renderMyGroups);
+  document.getElementById('bulk-select-btn').addEventListener('click', toggleBulkMode);
+  document.getElementById('select-all-cb').addEventListener('change', toggleSelectAll);
+  document.getElementById('leave-selected-btn').addEventListener('click', leaveSelected);
+
+  // Checkbox delegation for bulk mode
+  document.getElementById('groups-list').addEventListener('change', e => {
+    const cb = e.target.closest('.group-cb');
+    if (!cb) return;
+    if (cb.checked) {
+      selectedGroups.add(cb.dataset.id);
+    } else {
+      selectedGroups.delete(cb.dataset.id);
+    }
+    updateLeaveSelectedBtn();
+  });
 
   // Find Groups
   document.getElementById('search-btn').addEventListener('click', handleSearch);
@@ -84,6 +102,10 @@ async function loadMyGroups() {
     activeMaxMembers = null;
     document.getElementById('max-members').value = '';
 
+    // Reset bulk selection state
+    if (bulkMode) toggleBulkMode();
+    selectedGroups.clear();
+
     if (myGroups.length === 0) {
       showStatus(
         'No groups detected on this page. Navigate to facebook.com/groups and try again.',
@@ -93,8 +115,9 @@ async function loadMyGroups() {
       return;
     }
 
-    // Show filter controls
+    // Show filter controls and bulk-select button
     document.getElementById('filter-bar').hidden = false;
+    document.getElementById('bulk-select-btn').hidden = false;
     renderMyGroups();
     showStatus(`Found ${myGroups.length} group${myGroups.length !== 1 ? 's' : ''}.`, 'success');
   } catch (err) {
@@ -133,6 +156,13 @@ function renderMyGroups() {
   // Sort
   groups = sortGroups(groups, sortBy);
 
+  // Track visible groups for Select All
+  visibleGroups = groups;
+
+  // Reset selections that are no longer visible
+  const visibleIds = new Set(groups.map(g => g.id));
+  selectedGroups.forEach(id => { if (!visibleIds.has(id)) selectedGroups.delete(id); });
+
   // Count line
   const countEl = document.getElementById('my-groups-count');
   countEl.hidden = false;
@@ -141,6 +171,7 @@ function renderMyGroups() {
     : `${groups.length} group${groups.length !== 1 ? 's' : ''} found`;
 
   renderGroupCards('groups-list', groups, 'my');
+  if (bulkMode) updateLeaveSelectedBtn();
 }
 
 // ─── Search for Groups ────────────────────────────────────────────────────────
@@ -241,8 +272,13 @@ function groupCardHTML(group, mode) {
     ? `<a href="${escapeAttr(group.url + '/members')}" target="_blank" class="btn btn-danger" title="Open Leave Group page">Leave</a>`
     : `<a href="${escapeAttr(group.url)}" target="_blank" class="btn btn-join" title="Open group to join">Join</a>`;
 
+  const checkbox = (mode === 'my' && bulkMode)
+    ? `<input type="checkbox" class="group-cb" data-id="${escapeAttr(group.id)}"${selectedGroups.has(group.id) ? ' checked' : ''} aria-label="${escapeAttr('Select ' + group.name)}" />`
+    : '';
+
   return `
     <div class="group-card">
+      ${checkbox}
       <div class="group-avatar" aria-hidden="true">${escapeHTML(initial)}</div>
       <div class="group-info">
         <a href="${escapeAttr(group.url)}" target="_blank" class="group-name" title="${escapeAttr(group.name)}">${escapeHTML(group.name)}</a>
@@ -268,6 +304,61 @@ function memberBadge(count) {
     cls = 'badge-huge'; label = 'Huge';
   }
   return `<span class="member-badge ${cls}">${label}</span>`;
+}
+
+// ─── Bulk selection helpers ───────────────────────────────────────────────────
+function toggleBulkMode() {
+  bulkMode = !bulkMode;
+  selectedGroups.clear();
+  const btn = document.getElementById('bulk-select-btn');
+  if (bulkMode) {
+    btn.textContent = '✕ Cancel';
+    btn.classList.replace('btn-secondary', 'btn-ghost');
+  } else {
+    btn.textContent = '☑ Select';
+    btn.classList.replace('btn-ghost', 'btn-secondary');
+  }
+  document.getElementById('bulk-bar').hidden = !bulkMode;
+  document.getElementById('select-all-cb').checked = false;
+  renderMyGroups();
+}
+
+function toggleSelectAll(e) {
+  if (e.target.checked) {
+    visibleGroups.forEach(g => selectedGroups.add(g.id));
+  } else {
+    selectedGroups.clear();
+  }
+  document.querySelectorAll('.group-cb').forEach(cb => {
+    cb.checked = e.target.checked;
+  });
+  updateLeaveSelectedBtn();
+}
+
+function updateLeaveSelectedBtn() {
+  const btn = document.getElementById('leave-selected-btn');
+  const count = selectedGroups.size;
+  btn.textContent = `Leave (${count})`;
+  btn.disabled = count === 0;
+  const allCb = document.getElementById('select-all-cb');
+  const total = visibleGroups.length;
+  allCb.indeterminate = count > 0 && count < total;
+  allCb.checked = total > 0 && count === total;
+}
+
+function leaveSelected() {
+  const toLeave = [...selectedGroups];
+  toLeave.forEach(id => {
+    const group = myGroups.find(g => g.id === id);
+    if (group) {
+      chrome.tabs.create({ url: group.url + '/members', active: false });
+    }
+  });
+  showStatus(
+    `Opened ${toLeave.length} group page${toLeave.length !== 1 ? 's' : ''} in new tabs.`,
+    'info'
+  );
+  toggleBulkMode();
 }
 
 // ─── Sort helper ──────────────────────────────────────────────────────────────
@@ -360,19 +451,21 @@ async function extractGroupsFromPage() {
   }
 
   function findMemberCount(anchor) {
-    // Walk up at most 8 levels looking for "X members" text
+    // Walk up at most 6 levels; at each level check direct children
+    // independently to avoid capturing text from sibling group cards.
     let el = anchor;
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 6; i++) {
       el = el.parentElement;
       if (!el) break;
-      const text = el.innerText || '';
-      // Match patterns like: "1,234 members", "1.2K members", "25K Members"
-      const m = text.match(/([\d,.]+\s*[KMBkmb]?)\s+[Mm]embers?/);
-      if (m) {
-        return {
-          memberCount: parseCount(m[1]),
-          memberCountText: m[0].trim()
-        };
+      for (const child of el.children) {
+        const text = child.innerText || '';
+        const m = text.match(/([\d,.]+\s*[KMBkmb]?)\s+[Mm]embers?/);
+        if (m) {
+          return {
+            memberCount: parseCount(m[1]),
+            memberCountText: m[0].trim()
+          };
+        }
       }
     }
     return { memberCount: 0, memberCountText: '' };
